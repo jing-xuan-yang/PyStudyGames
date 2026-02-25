@@ -7,9 +7,15 @@ SCREEN_WIDTH  = 480         # 游戏窗口的宽度（单位：像素）
 SCREEN_HEIGHT = 360         # 游戏窗口的高度（单位：像素）
 BLOCK_WIDTH = 30            # 坦克/地图块的宽度（单位：像素）
 BLOCK_HEIGHT = 30           # 坦克/地图块的高度（单位：像素）
+TOP_BAR_HEIGHT = 30         # 顶部分数栏高度（单位：像素）
+
+# 地图行列数（由屏幕大小、top bar、block大小共同决定）
+MAP_COLS = SCREEN_WIDTH // BLOCK_WIDTH
+MAP_ROWS = (SCREEN_HEIGHT - TOP_BAR_HEIGHT) // BLOCK_HEIGHT
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
+GRAY = (80, 80, 80)
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 YELLOW = (255, 255, 0)
@@ -89,6 +95,8 @@ all_enemy_bullets = pygame.sprite.Group()
 all_p1_bullets = pygame.sprite.Group()
 all_p2_bullets = pygame.sprite.Group()
 all_walls = pygame.sprite.Group()
+all_barriers = pygame.sprite.Group()
+all_grasses = pygame.sprite.Group()
 
 def load_block_image(image_file):
     image = pygame.image.load("image/" + image_file).convert_alpha()
@@ -96,8 +104,9 @@ def load_block_image(image_file):
     return image
 
 # 所有精灵块的创建
-def sprite_create(images, x, y, update):
+def sprite_create(name, images, x, y, update):
     sprite = pygame.sprite.Sprite()
+    sprite.name = name
     sprite.images = images
     sprite.image = sprite.images[0]
     sprite.rect = sprite.image.get_rect()
@@ -107,9 +116,17 @@ def sprite_create(images, x, y, update):
     sprite.direction = 'up'      # 默认朝上
     sprite.frame = 0             # 当前动画帧
     def sprite_update():
-        update(sprite)
+        update(sprite, name)
     sprite.update = sprite_update
     all_sprites.add(sprite)
+
+    if name == 'wall':
+        all_walls.add(sprite)
+    elif name == 'barrier':
+        all_barriers.add(sprite)
+    elif name == 'grass':
+        all_grasses.add(sprite)
+
     return sprite
 
 # 所有坦克的控制
@@ -119,7 +136,7 @@ def tank_move(tank, direction):
         tank.rect.x -= tank.speed
     elif direction == 'right' and tank.rect.right < SCREEN_WIDTH:
         tank.rect.x += tank.speed
-    elif direction == 'up' and tank.rect.top > 0:
+    elif direction == 'up' and tank.rect.top > TOP_BAR_HEIGHT:
         tank.rect.y -= tank.speed
     elif direction == 'down' and tank.rect.bottom < SCREEN_HEIGHT:
         tank.rect.y += tank.speed
@@ -134,6 +151,50 @@ def tank_move(tank, direction):
 
 print('【启动】创建Map ...')
 
+# 地图块：统一 update（可拿到类型名）
+def map_update(map_block, name):
+    # 示例：水块做简单动画，其它地图块不动
+    if name == 'water' and len(map_block.images) > 1:
+        map_block.animation_tick += 1
+        if map_block.animation_tick >= 8:   # 每 8 帧切换一次，避免闪烁
+            map_block.animation_tick = 0
+            map_block.frame = (map_block.frame + 1) % len(map_block.images)
+            map_block.image = map_block.images[map_block.frame]
+
+
+def build_random_map():
+    wall_image = load_block_image('wall.png')
+    barrier_image = load_block_image('barrier.png')
+    water_images = [load_block_image('water_1.png'), load_block_image('water_2.png')]
+    grass_image = load_block_image('grass.png')
+
+    for row in range(MAP_ROWS):
+        for col in range(MAP_COLS):
+            # 地图四周保留一圈为空
+            if row == 0 or row == MAP_ROWS - 1 or col == 0 or col == MAP_COLS - 1:
+                continue
+
+            x = col * BLOCK_WIDTH
+            y = TOP_BAR_HEIGHT + row * BLOCK_HEIGHT
+
+            # 按权重随机：空格20，barrier20，water20，grass20，wall40
+            roll = random.randint(1, 120)
+
+            if roll <= 20:
+                continue
+            elif roll <= 40:
+                sprite_create('barrier', [barrier_image], x, y, map_update)
+            elif roll <= 60:
+                water = sprite_create('water', water_images, x, y, map_update)
+                water.animation_tick = 0
+            elif roll <= 80:
+                sprite_create('grass', [grass_image], x, y, map_update)
+            else:
+                sprite_create('wall', [wall_image], x, y, map_update)
+
+
+build_random_map()
+
 
 print('【启动】创建P1 ...')
 # 记录当前按下的方向键，最后一个是最新按下的
@@ -141,13 +202,13 @@ p1_pressed_keys = []
 p1_key_map = {pygame.K_LEFT: 'left', pygame.K_RIGHT: 'right',
               pygame.K_UP: 'up', pygame.K_DOWN: 'down'}
 
-def p1_update(self):
+def p1_update(self, name):
     tank = self
     if len(p1_pressed_keys) > 0:
         tank_move(tank, p1_pressed_keys[-1])  # 响应最后按下的键
 
 p1_score = 1234
-p1 = sprite_create([load_block_image("p1_1.png"), load_block_image("p1_2.png")], 100, 100, p1_update)
+p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], 100, 100, p1_update)
 
 print('【开始游戏】...')
 
@@ -173,9 +234,12 @@ while running:
     screen.fill(BLACK)  # 清空屏幕
     all_sprites.update() # 调用所有sprites的update函数
     all_sprites.draw(screen) # 将组内每个精灵的 image 绘制到 screen 上对应的 rect 位置。
+    all_grasses.draw(screen) # 再画一次草地，保证草在坦克上层
 
+    # 顶部分数栏（灰色背景）
+    pygame.draw.rect(screen, GRAY, (0, 0, SCREEN_WIDTH, TOP_BAR_HEIGHT))
     score_text = font.render(f"P1 Score: {p1_score}", True, WHITE)  # 显示分数
-    screen.blit(score_text, (10, 10))
+    screen.blit(score_text, (10, 0))
 
     pygame.display.update()  # 将绘制的内容刷新到屏幕上（不调用这行画面不会更新）
     clock.tick(FPS)       # 控制帧率，确保每秒只刷新 FPS 次
