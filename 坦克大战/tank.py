@@ -13,6 +13,23 @@ TOP_BAR_HEIGHT = 30         # 顶部分数栏高度（单位：像素）
 MAP_COLS = SCREEN_WIDTH // BLOCK_WIDTH
 MAP_ROWS = (SCREEN_HEIGHT - TOP_BAR_HEIGHT) // BLOCK_HEIGHT
 
+# heart 位置（地图最下面一行的中间）
+HEART_COL = MAP_COLS // 2
+HEART_ROW = MAP_ROWS - 1
+HEART_X = HEART_COL * BLOCK_WIDTH
+HEART_Y = TOP_BAR_HEIGHT + HEART_ROW * BLOCK_HEIGHT
+
+# P1/P2 初始位置（相对 heart：左2格、右2格）
+P1_START_COL = HEART_COL - 2
+P1_START_ROW = HEART_ROW
+P1_START_X = P1_START_COL * BLOCK_WIDTH
+P1_START_Y = TOP_BAR_HEIGHT + P1_START_ROW * BLOCK_HEIGHT
+
+P2_START_COL = HEART_COL + 2
+P2_START_ROW = HEART_ROW
+P2_START_X = P2_START_COL * BLOCK_WIDTH
+P2_START_Y = TOP_BAR_HEIGHT + P2_START_ROW * BLOCK_HEIGHT
+
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 GRAY = (80, 80, 80)
@@ -112,7 +129,7 @@ def sprite_create(name, images, x, y, update):
     sprite.rect = sprite.image.get_rect()
     sprite.rect.x = x
     sprite.rect.y = y
-    sprite.speed = 1
+    sprite.speed = 4
     sprite.direction = 'up'      # 默认朝上
     sprite.frame = 0             # 当前动画帧
     def sprite_update():
@@ -167,9 +184,21 @@ def build_random_map():
     barrier_image = load_block_image('barrier.png')
     water_images = [load_block_image('water_1.png'), load_block_image('water_2.png')]
     grass_image = load_block_image('grass.png')
+    heart_images = [load_block_image('heart_ok.png'), load_block_image('heart_die.png')]
+
+    # heart 本体与其左/上/右三面墙，统一先预留，避免随机地图覆盖
+    reserved_cells = {
+        (HEART_ROW, HEART_COL),         # heart
+        (HEART_ROW, HEART_COL - 1),     # 左 wall
+        (HEART_ROW, HEART_COL + 1),     # 右 wall
+        (HEART_ROW - 1, HEART_COL),     # 上 wall
+    }
 
     for row in range(MAP_ROWS):
         for col in range(MAP_COLS):
+            if (row, col) in reserved_cells:
+                continue
+
             # 地图四周保留一圈为空
             if row == 0 or row == MAP_ROWS - 1 or col == 0 or col == MAP_COLS - 1:
                 continue
@@ -192,8 +221,17 @@ def build_random_map():
             else:
                 sprite_create('wall', [wall_image], x, y, map_update)
 
+    # 放置 heart（最下面一行中间）
+    heart = sprite_create('heart', heart_images, HEART_X, HEART_Y, map_update)
 
-build_random_map()
+    # 用 wall 包围 heart 的左/上/右
+    sprite_create('wall', [wall_image], HEART_X - BLOCK_WIDTH, HEART_Y, map_update)
+    sprite_create('wall', [wall_image], HEART_X + BLOCK_WIDTH, HEART_Y, map_update)
+    sprite_create('wall', [wall_image], HEART_X, HEART_Y - BLOCK_HEIGHT, map_update)
+
+    return heart
+
+heart = build_random_map()
 
 
 print('【启动】创建P1 ...')
@@ -208,7 +246,7 @@ def p1_update(self, name):
         tank_move(tank, p1_pressed_keys[-1])  # 响应最后按下的键
 
 p1_score = 1234
-p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], 100, 100, p1_update)
+p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], P1_START_X, P1_START_Y, p1_update)
 
 print('【开始游戏】...')
 
