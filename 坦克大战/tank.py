@@ -1,7 +1,6 @@
 import sys                  # 导入 sys 模块，用于获取系统信息和退出程序
 import random               # 导入 random 模块，用于生成随机数（随机选择背景、管道位置等）
 import pygame               # 导入 pygame 模块，这是游戏开发的核心库
-from pygame import *        # 从 pygame.locals 导入所有常量（如 QUIT、KEYDOWN、K_SPACE 等）
 
 FPS = 30                    # 帧率：每秒刷新30次画面（Frames Per Second，帧/秒）
 SCREEN_WIDTH  = 480         # 游戏窗口的宽度（单位：像素）
@@ -96,25 +95,24 @@ def load_block_image(image_file):
     image = pygame.transform.scale(image, (BLOCK_WIDTH, BLOCK_HEIGHT))  # 调整图片大小
     return image
 
-# 所有坦克的创建和控制
-def tank_create(image_files, x, y, update):
-    tank = pygame.sprite.Sprite()
-    tank.images = []
-    for image_file in image_files:
-        tank.images.append(load_block_image(image_file))
-    tank.image = tank.images[0]
-    tank.rect = tank.image.get_rect()
-    tank.rect.x = x
-    tank.rect.y = y
-    tank.speed = 1
-    tank.direction = 'up'      # 默认朝上
-    tank.frame = 0             # 当前动画帧
-    def tank_update():
-        update(tank)
-    tank.update = tank_update
-    all_sprites.add(tank)
-    return tank
+# 所有精灵块的创建
+def sprite_create(images, x, y, update):
+    sprite = pygame.sprite.Sprite()
+    sprite.images = images
+    sprite.image = sprite.images[0]
+    sprite.rect = sprite.image.get_rect()
+    sprite.rect.x = x
+    sprite.rect.y = y
+    sprite.speed = 1
+    sprite.direction = 'up'      # 默认朝上
+    sprite.frame = 0             # 当前动画帧
+    def sprite_update():
+        update(sprite)
+    sprite.update = sprite_update
+    all_sprites.add(sprite)
+    return sprite
 
+# 所有坦克的控制
 def tank_move(tank, direction):
     """通用坦克移动函数，direction 为 'up'/'down'/'left'/'right'"""
     if direction == 'left' and tank.rect.left > 0:
@@ -133,18 +131,23 @@ def tank_move(tank, direction):
     angles = {'right': 0, 'left': 180, 'up': 90, 'down': -90}
     tank.image = pygame.transform.rotate(tank.images[tank.frame], angles[direction])
 
+
+print('【启动】创建Map ...')
+
+
 print('【启动】创建P1 ...')
 # 记录当前按下的方向键，最后一个是最新按下的
 p1_pressed_keys = []
 p1_key_map = {pygame.K_LEFT: 'left', pygame.K_RIGHT: 'right',
               pygame.K_UP: 'up', pygame.K_DOWN: 'down'}
 
-def p1_update(tank):
+def p1_update(self):
+    tank = self
     if len(p1_pressed_keys) > 0:
         tank_move(tank, p1_pressed_keys[-1])  # 响应最后按下的键
 
 p1_score = 1234
-p1 = tank_create(["p1_1.png", "p1_2.png"], 100, 100, p1_update)
+p1 = sprite_create([load_block_image("p1_1.png"), load_block_image("p1_2.png")], 100, 100, p1_update)
 
 print('【开始游戏】...')
 
