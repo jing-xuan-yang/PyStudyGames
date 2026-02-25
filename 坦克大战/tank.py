@@ -8,6 +8,11 @@ SCREEN_HEIGHT = 360         # 游戏窗口的高度（单位：像素）
 BLOCK_WIDTH = 30            # 坦克/地图块的宽度（单位：像素）
 BLOCK_HEIGHT = 30           # 坦克/地图块的高度（单位：像素）
 TOP_BAR_HEIGHT = 30         # 顶部分数栏高度（单位：像素）
+BULLET_WIDTH = 10           # 子弹宽度（单位：像素）
+BULLET_HEIGHT = 10          # 子弹高度（单位：像素）
+BULLET_SPEED = 8            # 子弹速度（单位：像素/帧）
+ENEMY_SPAWN_INTERVAL = FPS * 4   # 敌人固定刷新频率（每 4 秒）
+ENEMY_FIRE_INTERVAL = FPS * 2    # 敌人射击频率（每 2 秒）
 
 # 地图行列数（由屏幕大小、top bar、block大小共同决定）
 MAP_COLS = SCREEN_WIDTH // BLOCK_WIDTH
@@ -30,6 +35,17 @@ P2_START_COL = HEART_COL + 2
 P2_START_ROW = HEART_ROW
 P2_START_X = P2_START_COL * BLOCK_WIDTH
 P2_START_Y = TOP_BAR_HEIGHT + P2_START_ROW * BLOCK_HEIGHT
+
+# 敌人在地图最上方左/中/右三个位置刷新
+ENEMY_LEFT_SPAWN_X = BLOCK_WIDTH
+ENEMY_MIDDLE_SPAWN_X = (MAP_COLS // 2) * BLOCK_WIDTH
+ENEMY_RIGHT_SPAWN_X = (MAP_COLS - 2) * BLOCK_WIDTH
+ENEMY_SPAWN_Y = TOP_BAR_HEIGHT
+ENEMY_SPAWN_POINTS = [
+    (ENEMY_LEFT_SPAWN_X, ENEMY_SPAWN_Y),
+    (ENEMY_MIDDLE_SPAWN_X, ENEMY_SPAWN_Y),
+    (ENEMY_RIGHT_SPAWN_X, ENEMY_SPAWN_Y),
+]
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -102,11 +118,14 @@ all_walls = pygame.sprite.Group()
 all_barriers = pygame.sprite.Group()
 all_waters = pygame.sprite.Group()
 all_grasses = pygame.sprite.Group()
+all_tanks = pygame.sprite.Group()
+all_bullets = pygame.sprite.Group()
 
 def load_block_image(image_file):
     image = pygame.image.load("image/" + image_file).convert_alpha()
     image = pygame.transform.scale(image, (BLOCK_WIDTH, BLOCK_HEIGHT))  # 调整图片大小
     return image
+
 
 # 所有精灵块的创建
 def sprite_create(name, images, x, y, update, size=None):
@@ -172,6 +191,233 @@ def tank_move(tank, direction):
     # 根据方向旋转图片（原始图片朝右）
     angles = {'right': 0, 'left': 180, 'up': 90, 'down': -90}
     tank.image = pygame.transform.rotate(tank.images[tank.frame], angles[direction])
+
+
+def add_score_by_name(name, value):
+    global p1_score, p2_score
+    if name == 'p1':
+        p1_score += value
+    elif name == 'p2':
+        p2_score += value
+
+
+def respawn_tank(tank):
+    if tank.name == 'p1':
+        tank.rect.x = P1_START_X
+        tank.rect.y = P1_START_Y
+    elif tank.name == 'p2':
+        tank.rect.x = P2_START_X
+        tank.rect.y = P2_START_Y
+
+    tank.direction = 'up'
+    tank.frame = 0
+    tank.image = tank.images[0]
+
+
+def handle_tank_hit(target_tank, bullet):
+    global p1_life, p2_life
+
+    # 同阵营命中：无副作用（仅子弹消失）
+    if target_tank.team == bullet.team:
+        return
+
+    # 异阵营命中：消灭目标
+    if target_tank.team == 'enemy':
+        target_tank.kill()
+        add_score_by_name(bullet.name, 10)
+    elif target_tank.name == 'p1':
+        p1_life -= 1
+        if p1_life > 0:
+            respawn_tank(target_tank)
+        else:
+            target_tank.kill()
+    elif target_tank.name == 'p2':
+        p2_life -= 1
+        if p2_life > 0:
+            respawn_tank(target_tank)
+        else:
+            target_tank.kill()
+
+
+def bullet_update(bullet):
+    if not bullet.alive():
+        return
+
+    if bullet.direction == 'left':
+        bullet.rect.x -= bullet.speed
+    elif bullet.direction == 'right':
+        bullet.rect.x += bullet.speed
+    elif bullet.direction == 'up':
+        bullet.rect.y -= bullet.speed
+    elif bullet.direction == 'down':
+        bullet.rect.y += bullet.speed
+
+    if bullet.rect.right < 0 or bullet.rect.left > SCREEN_WIDTH or bullet.rect.bottom < TOP_BAR_HEIGHT or bullet.rect.top > SCREEN_HEIGHT:
+        bullet.kill()
+        return
+
+
+def process_bullet_collisions():
+    # ============================================================
+    # pygame.sprite.groupcollide 详细说明（本函数核心）
+    # ------------------------------------------------------------
+    # 函数签名：
+    #   pygame.sprite.groupcollide(group1, group2, dokill1, dokill2)
+    #
+    # 参数含义：
+    #   group1 / group2 : 两个要做碰撞检测的精灵组
+    #   dokill1         : 若为 True，group1 中发生碰撞的精灵会自动 kill()
+    #   dokill2         : 若为 True，group2 中发生碰撞的精灵会自动 kill()
+    #
+    # 返回值（非常重要）：
+    #   返回一个字典 dict：
+    #     键   -> group1 里“发生了碰撞”的某个精灵
+    #     值   -> 一个列表，里面是它在 group2 中撞到的所有精灵
+    #
+    #   结构示意：
+    #     {
+    #       sprite_a: [sprite_x, sprite_y],
+    #       sprite_b: [sprite_z],
+    #     }
+    #
+    # 结合下面代码看：
+    #   bullet_hits = groupcollide(all_bullets, all_bullets, False, False)
+    #   含义是：
+    #   - 键：某颗子弹 bullet
+    #   - 值：这颗子弹碰到的其他子弹列表 other_bullets
+    #
+    # 注意：本函数里 dokill 都是 False，表示“先检测，再由我们自己决定业务逻辑”。
+    # 这样做的好处：
+    #   - 可以自定义加分
+    #   - 可以按阵营区分
+    #   - 可以先判断再 kill，逻辑更清晰
+    # ============================================================
+
+    # 1) 子弹互相抵消（批量检测）
+    bullet_hits = pygame.sprite.groupcollide(all_bullets, all_bullets, False, False)
+    for bullet, other_bullets in bullet_hits.items():
+        if not bullet.alive():
+            continue
+        for other_bullet in other_bullets:
+            if other_bullet == bullet or not other_bullet.alive():
+                continue
+
+            add_score_by_name(bullet.name, 1)
+            add_score_by_name(other_bullet.name, 1)
+            bullet.kill()
+            other_bullet.kill()
+            break
+
+    # 2) 子弹打墙（批量检测）
+    # 返回值结构：
+    #   {
+    #     某颗子弹bullet: [撞到的墙1, 撞到的墙2, ...],
+    #     ...
+    #   }
+    # 这里我们只处理第一块墙 walls[0]，并让子弹消失。
+    bullet_wall_hits = pygame.sprite.groupcollide(all_bullets, all_walls, False, False)
+    for bullet, walls in bullet_wall_hits.items():
+        if not bullet.alive() or len(walls) == 0:
+            continue
+        walls[0].kill()
+        add_score_by_name(bullet.name, 1)
+        bullet.kill()
+
+    # 3) 子弹打坦克（批量检测）
+    # 返回值结构：
+    #   {
+    #     某颗子弹bullet: [撞到的坦克1, 撞到的坦克2, ...],
+    #     ...
+    #   }
+    # 后续再按业务规则过滤：
+    #   - 不处理子弹自己的 owner
+    #   - 不处理已经死亡的 tank
+    #   - 其余交给 handle_tank_hit()（里面有阵营判断和掉血/加分）
+    bullet_tank_hits = pygame.sprite.groupcollide(all_bullets, all_tanks, False, False)
+    for bullet, tanks in bullet_tank_hits.items():
+        if not bullet.alive():
+            continue
+        for tank in tanks:
+            if tank == bullet.owner or not tank.alive():
+                continue
+            handle_tank_hit(tank, bullet)
+            bullet.kill()
+            break
+
+
+def fire_bullet(shooter):
+    def bullet_sprite_update(sprite, name):
+        bullet_update(sprite)
+
+    bullet_x = shooter.rect.centerx - (BULLET_WIDTH // 2)
+    bullet_y = shooter.rect.centery - (BULLET_HEIGHT // 2)
+    bullet = sprite_create(
+        shooter.name,                 # 子弹 name 记录发送者
+        [load_block_image('bullet_1.png')],
+        bullet_x,
+        bullet_y,
+        bullet_sprite_update,
+        size=(BULLET_WIDTH, BULLET_HEIGHT),
+    )
+
+    bullet.owner = shooter
+    bullet.team = shooter.team
+    bullet.direction = shooter.direction
+    bullet.speed = BULLET_SPEED
+
+    all_bullets.add(bullet)
+
+    if shooter.name == 'p1':
+        all_p1_bullets.add(bullet)
+    elif shooter.name == 'p2':
+        all_p2_bullets.add(bullet)
+    elif shooter.name.startswith('enemy'):
+        all_enemy_bullets.add(bullet)
+
+
+enemy_counter = 0
+
+
+def enemy_update(enemy, name):
+    enemy.move_tick += 1
+    if enemy.move_tick >= enemy.move_interval:
+        enemy.move_tick = 0
+        enemy.direction = random.choice(['left', 'right', 'up', 'down', 'down', 'down'])
+
+    tank_move(enemy, enemy.direction)
+
+    enemy.fire_tick += 1
+    if enemy.fire_tick >= ENEMY_FIRE_INTERVAL:
+        enemy.fire_tick = 0
+        fire_bullet(enemy)
+
+
+def spawn_enemy(x, y):
+    global enemy_counter
+    enemy_counter += 1
+    enemy_name = f'enemy_{enemy_counter}'
+    enemy = sprite_create(
+        enemy_name,
+        [load_block_image("enemy_1.png"), load_block_image("enemy_2.png")],
+        x,
+        y,
+        enemy_update,
+        size=(BLOCK_WIDTH - 5, BLOCK_HEIGHT - 5),
+    )
+    enemy.direction = 'down'
+    enemy.speed = 2
+    enemy.team = 'enemy'
+    all_tanks.add(enemy)
+    all_enemies.add(enemy)
+    enemy.move_tick = 0
+    enemy.move_interval = 12
+    enemy.fire_tick = 0
+    return enemy
+
+
+def spawn_enemies_at_top():
+    for spawn_x, spawn_y in ENEMY_SPAWN_POINTS:
+        spawn_enemy(spawn_x, spawn_y)
 
 
 print('【启动】创建Map ...')
@@ -257,8 +503,11 @@ def p1_update(self, name):
     if len(p1_pressed_keys) > 0:
         tank_move(tank, p1_pressed_keys[-1])  # 响应最后按下的键
 
-p1_score = 1234
-p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], P1_START_X, P1_START_Y, p1_update, size=(BLOCK_WIDTH - 2, BLOCK_HEIGHT - 2))
+p1_score = 0
+p1_life = 3
+p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], P1_START_X, P1_START_Y, p1_update, size=(BLOCK_WIDTH - 5, BLOCK_HEIGHT - 5))
+p1.team = 'player'
+all_tanks.add(p1)
 
 print('【启动】创建P2 ...')
 p2_pressed_keys = []
@@ -271,8 +520,15 @@ def p2_update(self, name):
     if len(p2_pressed_keys) > 0:
         tank_move(tank, p2_pressed_keys[-1])  # 响应最后按下的键
 
-p2_score = 1234
-p2 = sprite_create('p2', [load_block_image("p2_1.png"), load_block_image("p2_2.png")], P2_START_X, P2_START_Y, p2_update, size=(BLOCK_WIDTH - 2, BLOCK_HEIGHT - 2))
+p2_score = 0
+p2_life = 3
+p2 = sprite_create('p2', [load_block_image("p2_1.png"), load_block_image("p2_2.png")], P2_START_X, P2_START_Y, p2_update, size=(BLOCK_WIDTH - 5, BLOCK_HEIGHT - 5))
+p2.team = 'player'
+all_tanks.add(p2)
+
+# 开始时同时刷新 3 个敌人（左/中/右）
+spawn_enemies_at_top()
+enemy_spawn_tick = 0
 
 print('【开始游戏】...')
 
@@ -284,6 +540,11 @@ print('【开始游戏】...')
 
 running = True
 while running:
+    enemy_spawn_tick += 1
+    if enemy_spawn_tick >= ENEMY_SPAWN_INTERVAL:
+        enemy_spawn_tick = 0
+        spawn_enemies_at_top()
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -291,6 +552,12 @@ while running:
             p1_pressed_keys.append(p1_key_map[event.key])
         elif event.type == pygame.KEYDOWN and event.key in p2_key_map:
             p2_pressed_keys.append(p2_key_map[event.key])
+        elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+            if p1.alive() and p1_life > 0:
+                fire_bullet(p1)
+        elif event.type == pygame.KEYDOWN and (event.key == pygame.K_0 or event.key == pygame.K_KP0):
+            if p2.alive() and p2_life > 0:
+                fire_bullet(p2)
         elif event.type == pygame.KEYUP and event.key in p1_key_map:
             direction = p1_key_map[event.key]
             if direction in p1_pressed_keys:
@@ -303,15 +570,16 @@ while running:
     # 绘制
     screen.fill(BLACK)  # 清空屏幕
     all_sprites.update() # 调用所有sprites的update函数
+    process_bullet_collisions() # 子弹碰撞统一批量处理（更高效）
     all_sprites.draw(screen) # 将组内每个精灵的 image 绘制到 screen 上对应的 rect 位置。
     # 再画一次 grass：利用“后画的盖在上面”实现草丛遮挡坦克效果。
     all_grasses.draw(screen)
 
     # 顶部分数栏（灰色背景）
     pygame.draw.rect(screen, GRAY, (0, 0, SCREEN_WIDTH, TOP_BAR_HEIGHT))
-    score_text = font.render(f"P1 Score: {p1_score}", True, WHITE)  # 显示分数
+    score_text = font.render(f"P1 Score:{p1_score} Life:{p1_life}", True, WHITE)  # 显示分数和生命
     screen.blit(score_text, (10, 0))
-    score_text = font.render(f"P2 Score: {p2_score}", True, WHITE)  # 显示分数
+    score_text = font.render(f"P2 Score:{p2_score} Life:{p2_life}", True, WHITE)  # 显示分数和生命
     screen.blit(score_text, (220, 0))
 
     pygame.display.update()  # 将绘制的内容刷新到屏幕上（不调用这行画面不会更新）
