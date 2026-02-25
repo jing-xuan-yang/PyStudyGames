@@ -57,20 +57,6 @@ IMAGES = {}
 SOUNDS = {}
 
 print('【启动】开始加载游戏资源...')
-# --- 加载数字图片（0-9），用于在屏幕上显示分数 ---
-# convert_alpha() 将图片转换为支持透明通道的格式，提高绘制效率
-IMAGES['numbers'] = (
-        pygame.image.load('image/0.png').convert_alpha(),  # 数字 0
-        pygame.image.load('image/1.png').convert_alpha(),  # 数字 1
-        pygame.image.load('image/2.png').convert_alpha(),  # 数字 2
-        pygame.image.load('image/3.png').convert_alpha(),  # 数字 3
-        pygame.image.load('image/4.png').convert_alpha(),  # 数字 4
-        pygame.image.load('image/5.png').convert_alpha(),  # 数字 5
-        pygame.image.load('image/6.png').convert_alpha(),  # 数字 6
-        pygame.image.load('image/7.png').convert_alpha(),  # 数字 7
-        pygame.image.load('image/8.png').convert_alpha(),  # 数字 8
-        pygame.image.load('image/9.png').convert_alpha()   # 数字 9
-        )
 IMAGES['win'] = pygame.image.load('image/win.png').convert_alpha()
 IMAGES['select'] = pygame.image.load('image/select.png').convert_alpha()
 IMAGES['gameover'] = pygame.image.load('image/gameover.png').convert_alpha()
@@ -248,6 +234,19 @@ def p1_update(self, name):
 p1_score = 1234
 p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], P1_START_X, P1_START_Y, p1_update)
 
+print('【启动】创建P2 ...')
+p2_pressed_keys = []
+p2_key_map = {pygame.K_a: 'left', pygame.K_d: 'right',
+              pygame.K_w: 'up', pygame.K_s: 'down'}
+
+def p2_update(self, name):
+    tank = self
+    if len(p2_pressed_keys) > 0:
+        tank_move(tank, p2_pressed_keys[-1])  # 响应最后按下的键
+
+p2_score = 1234
+p2 = sprite_create('p2', [load_block_image("p2_1.png"), load_block_image("p2_2.png")], P2_START_X, P2_START_Y, p2_update)
+
 print('【开始游戏】...')
 
 #SOUNDS['start'].play()
@@ -263,10 +262,16 @@ while running:
             running = False
         elif event.type == pygame.KEYDOWN and event.key in p1_key_map:
             p1_pressed_keys.append(p1_key_map[event.key])
+        elif event.type == pygame.KEYDOWN and event.key in p2_key_map:
+            p2_pressed_keys.append(p2_key_map[event.key])
         elif event.type == pygame.KEYUP and event.key in p1_key_map:
             direction = p1_key_map[event.key]
             if direction in p1_pressed_keys:
                 p1_pressed_keys.remove(direction)
+        elif event.type == pygame.KEYUP and event.key in p2_key_map:
+            direction = p2_key_map[event.key]
+            if direction in p2_pressed_keys:
+                p2_pressed_keys.remove(direction)
 
     # 绘制
     screen.fill(BLACK)  # 清空屏幕
@@ -278,6 +283,8 @@ while running:
     pygame.draw.rect(screen, GRAY, (0, 0, SCREEN_WIDTH, TOP_BAR_HEIGHT))
     score_text = font.render(f"P1 Score: {p1_score}", True, WHITE)  # 显示分数
     screen.blit(score_text, (10, 0))
+    score_text = font.render(f"P2 Score: {p2_score}", True, WHITE)  # 显示分数
+    screen.blit(score_text, (220, 0))
 
     pygame.display.update()  # 将绘制的内容刷新到屏幕上（不调用这行画面不会更新）
     clock.tick(FPS)       # 控制帧率，确保每秒只刷新 FPS 次
