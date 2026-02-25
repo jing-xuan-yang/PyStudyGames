@@ -14,6 +14,7 @@ BULLET_SPEED = 8            # 子弹速度（单位：像素/帧）
 ENEMY_SPAWN_INTERVAL = FPS * 4   # 敌人固定刷新频率（每 4 秒）
 ENEMY_FIRE_INTERVAL = FPS * 2    # 敌人射击频率（每 2 秒）
 EXPLOSION_FRAME_INTERVAL = 4     # 爆炸动画每隔多少帧切换一次图片
+BORN_FRAME_INTERVAL = 4          # 出生动画每隔多少帧切换一次图片
 
 # 地图行列数（由屏幕大小、top bar、block大小共同决定）
 MAP_COLS = SCREEN_WIDTH // BLOCK_WIDTH
@@ -104,6 +105,14 @@ all_tanks = pygame.sprite.Group()
 all_bullets = pygame.sprite.Group()
 
 def load_block_image(image_file):
+    """加载并缩放一个地图图片。
+
+    参数:
+        image_file (str): 图片文件名，例如 'wall.png'。
+
+    返回:
+        pygame.Surface: 缩放为 BLOCK 大小后的图片。
+    """
     image = pygame.image.load("image/" + image_file).convert_alpha()
     image = pygame.transform.scale(image, (BLOCK_WIDTH, BLOCK_HEIGHT))  # 调整图片大小
     return image
@@ -111,6 +120,19 @@ def load_block_image(image_file):
 
 # 所有精灵块的创建
 def sprite_create(name, images, x, y, update, size=None):
+    """创建通用精灵并加入 all_sprites。
+
+    参数:
+        name (str): 精灵名字（类型标识）。
+        images (list[Surface] | tuple[Surface]): 动画帧列表（至少1帧）。
+        x (int): 精灵左上角 x 坐标。
+        y (int): 精灵左上角 y 坐标。
+        update (callable): 更新函数，签名 update(sprite, name)。
+        size (tuple[int, int] | None): 可选缩放尺寸，None 表示不缩放。
+
+    返回:
+        pygame.sprite.Sprite: 创建后的精灵对象。
+    """
     sprite = pygame.sprite.Sprite()
     sprite.name = name
     sprite.images = images
@@ -145,7 +167,15 @@ def sprite_create(name, images, x, y, update, size=None):
 
 # 所有坦克的控制
 def tank_move(tank, direction):
-    """通用坦克移动函数，direction 为 'up'/'down'/'left'/'right'"""
+    """通用坦克移动（带阻挡碰撞）。
+
+    参数:
+        tank (pygame.sprite.Sprite): 要移动的坦克。
+        direction (str): 方向，'up'/'down'/'left'/'right'。
+
+    返回:
+        None
+    """
     # 先保存旧位置。若发生碰撞，再回退到旧位置。
     old_x = tank.rect.x
     old_y = tank.rect.y
@@ -176,6 +206,15 @@ def tank_move(tank, direction):
 
 
 def add_score_by_name(name, value):
+    """给指定玩家加分。
+
+    参数:
+        name (str): 玩家名（'p1' 或 'p2'）。
+        value (int): 增加分值。
+
+    返回:
+        None
+    """
     global p1_score, p2_score
     if name == 'p1':
         p1_score += value
@@ -184,6 +223,14 @@ def add_score_by_name(name, value):
 
 
 def respawn_tank(tank):
+    """将玩家坦克复活到出生点，并重置朝向与动画帧。
+
+    参数:
+        tank (pygame.sprite.Sprite): 玩家坦克（p1 或 p2）。
+
+    返回:
+        None
+    """
     if tank.name == 'p1':
         tank.rect.x = P1_START_X
         tank.rect.y = P1_START_Y
@@ -194,9 +241,19 @@ def respawn_tank(tank):
     tank.direction = 'up'
     tank.frame = 0
     tank.image = tank.images[0]
+    spawn_tank_born(tank)
 
 
 def explosion_update(explosion, name):
+    """爆炸精灵更新：按帧间隔切图，播放完后自毁。
+
+    参数:
+        explosion (pygame.sprite.Sprite): 爆炸精灵。
+        name (str): 精灵名字（此处仅为统一签名）。
+
+    返回:
+        None
+    """
     explosion.frame_tick += 1
     if explosion.frame_tick >= EXPLOSION_FRAME_INTERVAL:
         explosion.frame_tick = 0
@@ -208,6 +265,15 @@ def explosion_update(explosion, name):
 
 
 def spawn_tank_explosion(x, y):
+    """在指定位置创建爆炸动画并播放死亡音效。
+
+    参数:
+        x (int): 爆炸左上角 x 坐标。
+        y (int): 爆炸左上角 y 坐标。
+
+    返回:
+        None
+    """
     explosion = sprite_create('explosion',
             [load_block_image('explosion_1.png'), load_block_image('explosion_1.png')],
             x, y, explosion_update, size=(BLOCK_WIDTH, BLOCK_HEIGHT)
@@ -217,7 +283,66 @@ def spawn_tank_explosion(x, y):
     SOUNDS['die'].play()
 
 
+def born_update(born, name):
+    """出生特效更新：按帧间隔切图，播放完后解除“不能动+不能被击中”。
+
+    参数:
+        born (pygame.sprite.Sprite): 出生特效精灵。
+        name (str): 精灵名字（此处仅为统一签名）。
+
+    返回:
+        None
+    """
+    born.frame_tick += 1
+    if born.frame_tick >= BORN_FRAME_INTERVAL:
+        born.frame_tick = 0
+        born.frame += 1
+        if born.frame >= len(born.images):
+            if born.owner.alive():
+                # 出生动画播完后，坦克才进入“可操作、可受击”的正常状态。
+                born.owner.can_move = True
+                born.owner.can_hit = True
+            born.kill()
+        else:
+            born.image = born.images[born.frame]
+
+
+def spawn_tank_born(tank):
+    """为指定坦克播放出生动画，并在动画结束前锁定移动与受击。
+
+    参数:
+        tank (pygame.sprite.Sprite): 需要播放出生动画的坦克。
+
+    返回:
+        None
+    """
+    # 设计约定：出生保护期内
+    # can_move=False -> 不能移动
+    # can_hit=False  -> 子弹命中时不生效（临时无敌）
+    tank.can_move = False
+    tank.can_hit = False
+    born = sprite_create(
+        'born',
+        list(IMAGES['born']),
+        tank.rect.x,
+        tank.rect.y,
+        born_update,
+        size=(BLOCK_WIDTH, BLOCK_HEIGHT),
+    )
+    born.owner = tank
+    born.frame_tick = 0
+
+
 def handle_tank_hit(target_tank, bullet):
+    """处理坦克被子弹命中的业务规则。
+
+    参数:
+        target_tank (pygame.sprite.Sprite): 被击中的坦克。
+        bullet (pygame.sprite.Sprite): 命中的子弹。
+
+    返回:
+        None
+    """
     global p1_life, p2_life
 
     # 同阵营命中：无副作用（仅子弹消失）
@@ -246,6 +371,14 @@ def handle_tank_hit(target_tank, bullet):
 
 
 def bullet_update(bullet):
+    """更新单颗子弹的位置与越界销毁。
+
+    参数:
+        bullet (pygame.sprite.Sprite): 要更新的子弹。
+
+    返回:
+        None
+    """
     if not bullet.alive():
         return
 
@@ -264,6 +397,14 @@ def bullet_update(bullet):
 
 
 def process_bullet_collisions():
+    """统一处理子弹相关碰撞（子弹-子弹、子弹-墙、子弹-坦克）。
+
+    参数:
+        无
+
+    返回:
+        None
+    """
     # ============================================================
     # pygame.sprite.groupcollide 详细说明（本函数核心）
     # ------------------------------------------------------------
@@ -338,13 +479,14 @@ def process_bullet_collisions():
     # 后续再按业务规则过滤：
     #   - 不处理子弹自己的 owner
     #   - 不处理已经死亡的 tank
+    #   - 不处理 can_hit=False 的 tank（出生保护期无敌）
     #   - 其余交给 handle_tank_hit()（里面有阵营判断和掉血/加分）
     bullet_tank_hits = pygame.sprite.groupcollide(all_bullets, all_tanks, False, False)
     for bullet, tanks in bullet_tank_hits.items():
         if not bullet.alive():
             continue
         for tank in tanks:
-            if tank == bullet.owner or not tank.alive():
+            if tank == bullet.owner or not tank.alive() or not tank.can_hit:
                 continue
             handle_tank_hit(tank, bullet)
             bullet.kill()
@@ -352,6 +494,14 @@ def process_bullet_collisions():
 
 
 def fire_bullet(shooter):
+    """让一个坦克发射子弹。
+
+    参数:
+        shooter (pygame.sprite.Sprite): 发射者（p1/p2/enemy）。
+
+    返回:
+        None
+    """
     if shooter.name == 'p1' or shooter.name == 'p2':
         SOUNDS['fire'].play()
 
@@ -388,6 +538,18 @@ enemy_counter = 0
 
 
 def enemy_update(enemy, name):
+    """敌方坦克 AI 更新：定时换方向并定时开火。
+
+    参数:
+        enemy (pygame.sprite.Sprite): 敌方坦克。
+        name (str): 敌方名字（如 enemy_3）。
+
+    返回:
+        None
+    """
+    if not enemy.can_move:
+        return
+
     enemy.move_tick += 1
     if enemy.move_tick >= enemy.move_interval:
         enemy.move_tick = 0
@@ -402,6 +564,15 @@ def enemy_update(enemy, name):
 
 
 def spawn_enemy(x, y):
+    """在指定位置创建一个敌方坦克。
+
+    参数:
+        x (int): 生成点 x 坐标。
+        y (int): 生成点 y 坐标。
+
+    返回:
+        pygame.sprite.Sprite: 新建的敌方坦克。
+    """
     global enemy_counter
     enemy_counter += 1
     enemy_name = f'enemy_{enemy_counter}'
@@ -421,10 +592,23 @@ def spawn_enemy(x, y):
     enemy.move_tick = 0
     enemy.move_interval = 12
     enemy.fire_tick = 0
+    # 默认先给 True，随后 spawn_tank_born() 会立刻切为 False，
+    # 动画结束后再恢复 True，便于学生观察完整状态流。
+    enemy.can_move = True
+    enemy.can_hit = True
+    spawn_tank_born(enemy)
     return enemy
 
 
 def spawn_enemies_at_top():
+    """在顶部左/中/右三个固定点各刷一个敌人。
+
+    参数:
+        无
+
+    返回:
+        None
+    """
     for spawn_x, spawn_y in ENEMY_SPAWN_POINTS:
         spawn_enemy(spawn_x, spawn_y)
 
@@ -433,6 +617,15 @@ print('【启动】创建Map ...')
 
 # 地图块：统一 update（可拿到类型名）
 def map_update(map_block, name):
+    """地图块更新（当前仅 water 动画）。
+
+    参数:
+        map_block (pygame.sprite.Sprite): 地图块对象。
+        name (str): 地图块类型名。
+
+    返回:
+        None
+    """
     # 示例：水块做简单动画，其它地图块不动
     if name == 'water' and len(map_block.images) > 1:
         map_block.animation_tick += 1
@@ -443,6 +636,14 @@ def map_update(map_block, name):
 
 
 def build_random_map():
+    """按权重随机生成地图，并放置 heart 与三面保护墙。
+
+    参数:
+        无
+
+    返回:
+        pygame.sprite.Sprite: heart 精灵对象。
+    """
     wall_image = load_block_image('wall.png')
     barrier_image = load_block_image('barrier.png')
     water_images = [load_block_image('water_1.png'), load_block_image('water_2.png')]
@@ -508,7 +709,18 @@ p1_key_map = {pygame.K_LEFT: 'left', pygame.K_RIGHT: 'right',
               pygame.K_UP: 'up', pygame.K_DOWN: 'down'}
 
 def p1_update(self, name):
+    """P1 每帧更新：按当前按键状态移动。
+
+    参数:
+        self (pygame.sprite.Sprite): P1 坦克。
+        name (str): 精灵名（此处为 'p1'）。
+
+    返回:
+        None
+    """
     tank = self
+    if not tank.can_move:
+        return
     if len(p1_pressed_keys) > 0:
         tank_move(tank, p1_pressed_keys[-1])  # 响应最后按下的键
 
@@ -516,7 +728,11 @@ p1_score = 0
 p1_life = 3
 p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], P1_START_X, P1_START_Y, p1_update, size=(BLOCK_WIDTH - 5, BLOCK_HEIGHT - 5))
 p1.team = 'player'
+# 可移动/可受击默认值；spawn_tank_born() 会在出生期临时改为 False。
+p1.can_move = True
+p1.can_hit = True
 all_tanks.add(p1)
+spawn_tank_born(p1)
 
 print('【启动】创建P2 ...')
 p2_pressed_keys = []
@@ -525,7 +741,18 @@ p2_key_map = {pygame.K_a: 'left', pygame.K_d: 'right',
               pygame.K_w: 'up', pygame.K_s: 'down'}
 
 def p2_update(self, name):
+    """P2 每帧更新：按当前按键状态移动。
+
+    参数:
+        self (pygame.sprite.Sprite): P2 坦克。
+        name (str): 精灵名（此处为 'p2'）。
+
+    返回:
+        None
+    """
     tank = self
+    if not tank.can_move:
+        return
     if len(p2_pressed_keys) > 0:
         tank_move(tank, p2_pressed_keys[-1])  # 响应最后按下的键
 
@@ -533,7 +760,11 @@ p2_score = 0
 p2_life = 3
 p2 = sprite_create('p2', [load_block_image("p2_1.png"), load_block_image("p2_2.png")], P2_START_X, P2_START_Y, p2_update, size=(BLOCK_WIDTH - 5, BLOCK_HEIGHT - 5))
 p2.team = 'player'
+# 可移动/可受击默认值；spawn_tank_born() 会在出生期临时改为 False。
+p2.can_move = True
+p2.can_hit = True
 all_tanks.add(p2)
+spawn_tank_born(p2)
 
 # 开始时同时刷新 3 个敌人（左/中/右）
 spawn_enemies_at_top()
@@ -563,10 +794,10 @@ while running:
         elif event.type == pygame.KEYDOWN and event.key in p2_key_map:
             p2_pressed_keys.append(p2_key_map[event.key])
         elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-            if p1.alive() and p1_life > 0:
+            if p1.alive() and p1_life > 0 and p1.can_move:
                 fire_bullet(p1)
         elif event.type == pygame.KEYDOWN and (event.key == pygame.K_0 or event.key == pygame.K_KP0):
-            if p2.alive() and p2_life > 0:
+            if p2.alive() and p2_life > 0 and p2.can_move:
                 fire_bullet(p2)
         elif event.type == pygame.KEYUP and event.key in p1_key_map:
             direction = p1_key_map[event.key]
