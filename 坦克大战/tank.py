@@ -15,27 +15,6 @@ RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 YELLOW = (255, 255, 0)
 
-def load_block_image(image_file):
-    image = pygame.image.load("image/" + image_file).convert_alpha()
-    image = pygame.transform.scale(image, (BLOCK_WIDTH, BLOCK_HEIGHT))  # 调整图片大小
-    return image
-
-def create_tank(image_files, x, y, update):
-    tank = pygame.sprite.Sprite()
-    tank.images = []
-    for image_file in image_files:
-        tank.images.append(load_block_image(image_file))
-    tank.image = tank.images[0]
-    tank.rect = tank.image.get_rect()
-    tank.rect.x = x
-    tank.rect.y = y
-    tank.speed = 1
-    def tank_update():
-        update(tank)
-    tank.update = tank_update
-    all_sprites.add(tank)
-    return tank
-
 print('【启动】开始初始化游戏...')
 pygame.init()               # 初始化 Pygame 的所有子模块（显示、声音、字体等）
 
@@ -112,17 +91,60 @@ all_p1_bullets = pygame.sprite.Group()
 all_p2_bullets = pygame.sprite.Group()
 all_walls = pygame.sprite.Group()
 
-print('【启动】创建P1 ...')
-def p1_update(tank):
-    #print("tank_update")
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_LEFT] and tank.rect.left > 0:
+def load_block_image(image_file):
+    image = pygame.image.load("image/" + image_file).convert_alpha()
+    image = pygame.transform.scale(image, (BLOCK_WIDTH, BLOCK_HEIGHT))  # 调整图片大小
+    return image
+
+# 所有坦克的创建和控制
+def tank_create(image_files, x, y, update):
+    tank = pygame.sprite.Sprite()
+    tank.images = []
+    for image_file in image_files:
+        tank.images.append(load_block_image(image_file))
+    tank.image = tank.images[0]
+    tank.rect = tank.image.get_rect()
+    tank.rect.x = x
+    tank.rect.y = y
+    tank.speed = 1
+    tank.direction = 'up'      # 默认朝上
+    tank.frame = 0             # 当前动画帧
+    def tank_update():
+        update(tank)
+    tank.update = tank_update
+    all_sprites.add(tank)
+    return tank
+
+def tank_move(tank, direction):
+    """通用坦克移动函数，direction 为 'up'/'down'/'left'/'right'"""
+    if direction == 'left' and tank.rect.left > 0:
         tank.rect.x -= tank.speed
-    if keys[pygame.K_RIGHT] and tank.rect.right < SCREEN_WIDTH:
+    elif direction == 'right' and tank.rect.right < SCREEN_WIDTH:
         tank.rect.x += tank.speed
+    elif direction == 'up' and tank.rect.top > 0:
+        tank.rect.y -= tank.speed
+    elif direction == 'down' and tank.rect.bottom < SCREEN_HEIGHT:
+        tank.rect.y += tank.speed
+
+    tank.direction = direction
+    tank.frame = (tank.frame + 1) % len(tank.images)
+
+    # 根据方向旋转图片（原始图片朝右）
+    angles = {'right': 0, 'left': 180, 'up': 90, 'down': -90}
+    tank.image = pygame.transform.rotate(tank.images[tank.frame], angles[direction])
+
+print('【启动】创建P1 ...')
+# 记录当前按下的方向键，最后一个是最新按下的
+p1_pressed_keys = []
+p1_key_map = {pygame.K_LEFT: 'left', pygame.K_RIGHT: 'right',
+              pygame.K_UP: 'up', pygame.K_DOWN: 'down'}
+
+def p1_update(tank):
+    if len(p1_pressed_keys) > 0:
+        tank_move(tank, p1_pressed_keys[-1])  # 响应最后按下的键
 
 p1_score = 1234
-p1 = create_tank(["p1_1.png", "p1_2.png"], 100, 100, p1_update)
+p1 = tank_create(["p1_1.png", "p1_2.png"], 100, 100, p1_update)
 
 print('【开始游戏】...')
 
@@ -137,6 +159,12 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        elif event.type == pygame.KEYDOWN and event.key in p1_key_map:
+            p1_pressed_keys.append(p1_key_map[event.key])
+        elif event.type == pygame.KEYUP and event.key in p1_key_map:
+            direction = p1_key_map[event.key]
+            if direction in p1_pressed_keys:
+                p1_pressed_keys.remove(direction)
 
     # 绘制
     screen.fill(BLACK)  # 清空屏幕
