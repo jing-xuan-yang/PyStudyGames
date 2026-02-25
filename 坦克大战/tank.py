@@ -13,6 +13,7 @@ BULLET_HEIGHT = 10          # 子弹高度（单位：像素）
 BULLET_SPEED = 8            # 子弹速度（单位：像素/帧）
 ENEMY_SPAWN_INTERVAL = FPS * 4   # 敌人固定刷新频率（每 4 秒）
 ENEMY_FIRE_INTERVAL = FPS * 2    # 敌人射击频率（每 2 秒）
+EXPLOSION_FRAME_INTERVAL = 4     # 爆炸动画每隔多少帧切换一次图片
 
 # 地图行列数（由屏幕大小、top bar、block大小共同决定）
 MAP_COLS = SCREEN_WIDTH // BLOCK_WIDTH
@@ -62,7 +63,7 @@ print(f'【初始化】游戏窗口创建完成，大小: {SCREEN_WIDTH}x{SCREEN
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 
 # 创建字体对象
-font = pygame.font.Font(None, 36)      # None = 系统默认字体，36 = 字号
+font = pygame.font.Font(None, 30)      # None = 系统默认字体，36 = 字号
 
 # 创建一个时钟对象，用于控制游戏帧率（刷新速度）
 clock = pygame.time.Clock()
@@ -77,36 +78,17 @@ print('【启动】开始加载游戏资源...')
 IMAGES['win'] = pygame.image.load('image/win.png').convert_alpha()
 IMAGES['select'] = pygame.image.load('image/select.png').convert_alpha()
 IMAGES['gameover'] = pygame.image.load('image/gameover.png').convert_alpha()
-IMAGES['p1'] = (
-        pygame.image.load('image/p1_1.png').convert_alpha(),
-        pygame.image.load('image/p1_2.png').convert_alpha(),
-        )
-IMAGES['p2'] = (
-        pygame.image.load('image/p2_1.png').convert_alpha(),
-        pygame.image.load('image/p2_2.png').convert_alpha(),
-        )
-IMAGES['enemy'] = (
-        pygame.image.load('image/enemy_1.png').convert_alpha(),
-        pygame.image.load('image/enemy_2.png').convert_alpha(),
-        )
 IMAGES['born'] = (
         pygame.image.load('image/born_1.png').convert_alpha(),
         pygame.image.load('image/born_2.png').convert_alpha(),
         pygame.image.load('image/born_3.png').convert_alpha(),
         pygame.image.load('image/born_4.png').convert_alpha(),
         )
-IMAGES['explosion'] = (
-        pygame.image.load('image/explosion_1.png').convert_alpha(),
-        pygame.image.load('image/explosion_2.png').convert_alpha(),
-        )
-IMAGES['bullet'] = pygame.image.load('image/bullet_1.png').convert_alpha()
-IMAGES['wall'] = pygame.image.load('image/wall.png').convert_alpha()
-IMAGES['water'] = pygame.image.load('image/water_1.png').convert_alpha()
-IMAGES['barrier'] = pygame.image.load('image/barrier.png').convert_alpha()
 
 SOUNDS['start'] = pygame.mixer.Sound('audio/start.mp3')    # 死亡音效
-SOUNDS['die'] = pygame.mixer.Sound('audio/die.wav')    # 死亡音效
+SOUNDS['die'] = pygame.mixer.Sound('audio/die.wav')
 SOUNDS['hit'] = pygame.mixer.Sound('audio/hit.mp3')    # 撞击音效
+SOUNDS['fire'] = pygame.mixer.Sound('audio/fire.mp3')    # 撞击音效
 
 # 精灵组（group），用以碰撞检测或者批量控制
 all_sprites = pygame.sprite.Group()
@@ -214,12 +196,36 @@ def respawn_tank(tank):
     tank.image = tank.images[0]
 
 
+def explosion_update(explosion, name):
+    explosion.frame_tick += 1
+    if explosion.frame_tick >= EXPLOSION_FRAME_INTERVAL:
+        explosion.frame_tick = 0
+        explosion.frame += 1
+        if explosion.frame >= len(explosion.images):
+            explosion.kill()
+        else:
+            explosion.image = explosion.images[explosion.frame]
+
+
+def spawn_tank_explosion(x, y):
+    explosion = sprite_create('explosion',
+            [load_block_image('explosion_1.png'), load_block_image('explosion_1.png')],
+            x, y, explosion_update, size=(BLOCK_WIDTH, BLOCK_HEIGHT)
+    )
+    explosion.frame_tick = 0
+
+    SOUNDS['die'].play()
+
+
 def handle_tank_hit(target_tank, bullet):
     global p1_life, p2_life
 
     # 同阵营命中：无副作用（仅子弹消失）
     if target_tank.team == bullet.team:
         return
+
+    # 播放被击中爆炸动画（两帧）与死亡音效
+    spawn_tank_explosion(target_tank.rect.x, target_tank.rect.y)
 
     # 异阵营命中：消灭目标
     if target_tank.team == 'enemy':
@@ -346,6 +352,9 @@ def process_bullet_collisions():
 
 
 def fire_bullet(shooter):
+    if shooter.name == 'p1' or shooter.name == 'p2':
+        SOUNDS['fire'].play()
+
     def bullet_sprite_update(sprite, name):
         bullet_update(sprite)
 
@@ -532,11 +541,12 @@ enemy_spawn_tick = 0
 
 print('【开始游戏】...')
 
-#SOUNDS['start'].play()
 #print(f"display select ...")
 #screen.blit(IMAGES['select'], (0, 0))
 #screen.blit(IMAGES['wall'], (0, 0))
 #pygame.display.update()  # 将绘制的内容刷新到屏幕上（不调用这行画面不会更新）
+
+SOUNDS['start'].play()
 
 running = True
 while running:
