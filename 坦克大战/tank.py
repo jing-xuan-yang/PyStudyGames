@@ -20,6 +20,7 @@ HEART_X = HEART_COL * BLOCK_WIDTH
 HEART_Y = TOP_BAR_HEIGHT + HEART_ROW * BLOCK_HEIGHT
 
 # P1/P2 初始位置（相对 heart：左2格、右2格）
+# 注意：这里用“格子坐标”计算，改地图大小时出生点会自动跟随。
 P1_START_COL = HEART_COL - 2
 P1_START_ROW = HEART_ROW
 P1_START_X = P1_START_COL * BLOCK_WIDTH
@@ -91,7 +92,7 @@ SOUNDS['start'] = pygame.mixer.Sound('audio/start.mp3')    # 死亡音效
 SOUNDS['die'] = pygame.mixer.Sound('audio/die.wav')    # 死亡音效
 SOUNDS['hit'] = pygame.mixer.Sound('audio/hit.mp3')    # 撞击音效
 
-# 精灵组（group），用以碰撞检测
+# 精灵组（group），用以碰撞检测或者批量控制
 all_sprites = pygame.sprite.Group()
 all_enemies = pygame.sprite.Group()
 all_enemy_bullets = pygame.sprite.Group()
@@ -99,6 +100,7 @@ all_p1_bullets = pygame.sprite.Group()
 all_p2_bullets = pygame.sprite.Group()
 all_walls = pygame.sprite.Group()
 all_barriers = pygame.sprite.Group()
+all_waters = pygame.sprite.Group()
 all_grasses = pygame.sprite.Group()
 
 def load_block_image(image_file):
@@ -107,10 +109,16 @@ def load_block_image(image_file):
     return image
 
 # 所有精灵块的创建
-def sprite_create(name, images, x, y, update):
+def sprite_create(name, images, x, y, update, size=None):
     sprite = pygame.sprite.Sprite()
     sprite.name = name
     sprite.images = images
+    # 可选缩放：传入 size=(w, h) 时，统一缩放该精灵的所有动画帧。
+    if size is not None:
+        resized_images = []
+        for image in images:
+            resized_images.append(pygame.transform.smoothscale(image, size))
+        sprite.images = resized_images
     sprite.image = sprite.images[0]
     sprite.rect = sprite.image.get_rect()
     sprite.rect.x = x
@@ -127,6 +135,8 @@ def sprite_create(name, images, x, y, update):
         all_walls.add(sprite)
     elif name == 'barrier':
         all_barriers.add(sprite)
+    elif name == 'water':
+        all_waters.add(sprite)
     elif name == 'grass':
         all_grasses.add(sprite)
 
@@ -135,6 +145,10 @@ def sprite_create(name, images, x, y, update):
 # 所有坦克的控制
 def tank_move(tank, direction):
     """通用坦克移动函数，direction 为 'up'/'down'/'left'/'right'"""
+    # 先保存旧位置。若发生碰撞，再回退到旧位置。
+    old_x = tank.rect.x
+    old_y = tank.rect.y
+
     if direction == 'left' and tank.rect.left > 0:
         tank.rect.x -= tank.speed
     elif direction == 'right' and tank.rect.right < SCREEN_WIDTH:
@@ -143,6 +157,14 @@ def tank_move(tank, direction):
         tank.rect.y -= tank.speed
     elif direction == 'down' and tank.rect.bottom < SCREEN_HEIGHT:
         tank.rect.y += tank.speed
+
+    # 与 wall / barrier / water 碰撞则回退位置（达到“不能穿过”的效果）
+    hit_wall = pygame.sprite.spritecollideany(tank, all_walls)
+    hit_barrier = pygame.sprite.spritecollideany(tank, all_barriers)
+    hit_water = pygame.sprite.spritecollideany(tank, all_waters)
+    if hit_wall or hit_barrier or hit_water:
+        tank.rect.x = old_x
+        tank.rect.y = old_y
 
     tank.direction = direction
     tank.frame = (tank.frame + 1) % len(tank.images)
@@ -172,7 +194,8 @@ def build_random_map():
     grass_image = load_block_image('grass.png')
     heart_images = [load_block_image('heart_ok.png'), load_block_image('heart_die.png')]
 
-    # heart 本体与其左/上/右三面墙，统一先预留，避免随机地图覆盖
+    # heart 本体与其左/上/右三面墙，统一先预留，避免随机地图覆盖。
+    # 预留后，这些格子不会参与随机生成。
     reserved_cells = {
         (HEART_ROW, HEART_COL),         # heart
         (HEART_ROW, HEART_COL - 1),     # 左 wall
@@ -193,6 +216,7 @@ def build_random_map():
             y = TOP_BAR_HEIGHT + row * BLOCK_HEIGHT
 
             # 按权重随机：空格20，barrier20，water20，grass20，wall40
+            # 用 1~120 映射概率，便于直观看出比例。
             roll = random.randint(1, 120)
 
             if roll <= 20:
@@ -201,6 +225,7 @@ def build_random_map():
                 sprite_create('barrier', [barrier_image], x, y, map_update)
             elif roll <= 60:
                 water = sprite_create('water', water_images, x, y, map_update)
+                # 水面动画计时器：不每帧切图，避免闪烁。
                 water.animation_tick = 0
             elif roll <= 80:
                 sprite_create('grass', [grass_image], x, y, map_update)
@@ -223,6 +248,7 @@ heart = build_random_map()
 print('【启动】创建P1 ...')
 # 记录当前按下的方向键，最后一个是最新按下的
 p1_pressed_keys = []
+# P1：方向键控制
 p1_key_map = {pygame.K_LEFT: 'left', pygame.K_RIGHT: 'right',
               pygame.K_UP: 'up', pygame.K_DOWN: 'down'}
 
@@ -232,10 +258,11 @@ def p1_update(self, name):
         tank_move(tank, p1_pressed_keys[-1])  # 响应最后按下的键
 
 p1_score = 1234
-p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], P1_START_X, P1_START_Y, p1_update)
+p1 = sprite_create('p1', [load_block_image("p1_1.png"), load_block_image("p1_2.png")], P1_START_X, P1_START_Y, p1_update, size=(BLOCK_WIDTH - 2, BLOCK_HEIGHT - 2))
 
 print('【启动】创建P2 ...')
 p2_pressed_keys = []
+# P2：WASD 控制
 p2_key_map = {pygame.K_a: 'left', pygame.K_d: 'right',
               pygame.K_w: 'up', pygame.K_s: 'down'}
 
@@ -245,7 +272,7 @@ def p2_update(self, name):
         tank_move(tank, p2_pressed_keys[-1])  # 响应最后按下的键
 
 p2_score = 1234
-p2 = sprite_create('p2', [load_block_image("p2_1.png"), load_block_image("p2_2.png")], P2_START_X, P2_START_Y, p2_update)
+p2 = sprite_create('p2', [load_block_image("p2_1.png"), load_block_image("p2_2.png")], P2_START_X, P2_START_Y, p2_update, size=(BLOCK_WIDTH - 2, BLOCK_HEIGHT - 2))
 
 print('【开始游戏】...')
 
@@ -277,7 +304,8 @@ while running:
     screen.fill(BLACK)  # 清空屏幕
     all_sprites.update() # 调用所有sprites的update函数
     all_sprites.draw(screen) # 将组内每个精灵的 image 绘制到 screen 上对应的 rect 位置。
-    all_grasses.draw(screen) # 再画一次草地，保证草在坦克上层
+    # 再画一次 grass：利用“后画的盖在上面”实现草丛遮挡坦克效果。
+    all_grasses.draw(screen)
 
     # 顶部分数栏（灰色背景）
     pygame.draw.rect(screen, GRAY, (0, 0, SCREEN_WIDTH, TOP_BAR_HEIGHT))
